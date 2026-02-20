@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+**/wallets/
+**/coldkey*
+**/hotkey*
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
