@@ -52,6 +52,15 @@ _TASK_PATTERNS: list[tuple[re.Pattern[str], TaskType]] = [
         ),
         TaskType.REGISTRATION,
     ),
+    # Compound CONTACT: navigation verbs + "contact" (must precede NAVIGATION)
+    (
+        re.compile(
+            r"\bcontact\b.*\b(form|fill|submit|message|send)\b"
+            r"|\b(go\s+to|visit|navigat(e|ion)|browse\s+to)\b.*\bcontact\b",
+            re.IGNORECASE,
+        ),
+        TaskType.CONTACT,
+    ),
     (
         re.compile(
             r"\bnavig(ate|ation)\b|\bgo\s+to\b|\bvisit\b|\bbrowse\s+to\b",

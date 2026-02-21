@@ -159,21 +159,29 @@ def decide(request: ActRequest) -> ActResponse:
             # Determine login sub-step by counting type actions in history
             type_count = sum(
                 1 for h in request.history
-                if "type" in h.get("action", "").lower()
+                if h.get("action", "") == "type"  # exact match, not substring
             )
-            action_dict = get_login_action(min(type_count, 2), login_fields)
-            if action_dict is not None:
-                action = build_action(action_dict, candidates, request.url)
-                if action is not None:
-                    logger.info(
-                        "hardcoded logout(login-first) action",
-                        extra={
-                            "task_id": request.task_id,
-                            "step_index": request.step_index,
-                            "action_type": type(action).__name__,
-                        },
-                    )
-                    return ActResponse(actions=[action])
+            # Login sequence: type(0), type(1), click(2).
+            # After click-submit, type_count stays at 2 but a click exists.
+            # If both conditions met, login is done — fall through to LLM.
+            login_done = type_count >= 2 and any(
+                h.get("action", "") == "click" for h in request.history
+            )
+            if not login_done:
+                step = min(type_count, 2)
+                action_dict = get_login_action(step, login_fields)
+                if action_dict is not None:
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded logout(login-first) action",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
 
     if task_type == TaskType.REGISTRATION:
         reg_fields = detect_registration_fields(candidates)
