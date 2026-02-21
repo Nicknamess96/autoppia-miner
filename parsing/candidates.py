@@ -44,6 +44,7 @@ class Candidate:
     disabled: bool = False
     current_value: str = ""
     options: list[str] = field(default_factory=list)
+    context: str = ""
 
 
 def _attrs_to_str_map(attrs: dict) -> dict[str, str]:
@@ -79,6 +80,35 @@ def _get_select_options(el) -> list[str]:  # noqa: ANN001
         for opt in el.find_all("option")
         if opt.get_text(strip=True)
     ]
+
+
+def _norm_context_ws(s: str) -> str:
+    """Collapse whitespace in context text."""
+    import re as _re
+    return _re.sub(r"\s+", " ", s).strip()
+
+
+def _pick_context_container(el) -> str:  # noqa: ANN001
+    """Walk up the DOM (max 8 levels) to find a card-like container.
+
+    Looks for ``li``, ``tr``, ``article``, or a ``div`` whose visible text
+    is between 50 and 900 characters.  Returns the container's text
+    truncated to 180 chars, or empty string if no suitable container found.
+    """
+    _CARD_TAGS = {"li", "tr", "article"}
+    node = el.parent
+    for _ in range(8):
+        if node is None or node.name in (None, "body", "html", "[document]"):
+            break
+        tag = node.name
+        text = _norm_context_ws(node.get_text(" ", strip=True))
+        text_len = len(text)
+        if tag in _CARD_TAGS and 20 < text_len < 900:
+            return text[:180]
+        if tag == "div" and 50 < text_len < 900:
+            return text[:180]
+        node = node.parent
+    return ""
 
 
 def extract_candidates(
@@ -133,6 +163,10 @@ def extract_candidates(
             seen_sigs.add(sig)
 
             # Build candidate with full context
+            context = ""
+            if tag in ("a", "button"):
+                context = _pick_context_container(el)
+
             candidate = Candidate(
                 id=len(candidates),
                 tag=tag,
@@ -146,6 +180,7 @@ def extract_candidates(
                 checked="checked" in attrs,
                 current_value=attrs.get("value", ""),
                 options=_get_select_options(el) if tag == "select" else [],
+                context=context,
             )
             candidates.append(candidate)
 

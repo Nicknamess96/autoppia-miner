@@ -31,6 +31,19 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Same-URL detection
+# ---------------------------------------------------------------------------
+
+def _same_path_query(url_a: str, url_b: str) -> bool:
+    """Return True if two URLs have the same path and query (ignoring scheme/host/fragment)."""
+    if not url_a or not url_b:
+        return False
+    a = urlsplit(url_a)
+    b = urlsplit(url_b)
+    return a.path == b.path and a.query == b.query
+
+
+# ---------------------------------------------------------------------------
 # URL normalization
 # ---------------------------------------------------------------------------
 
@@ -199,6 +212,8 @@ def build_action(
     decision: dict,
     candidates: list[Candidate],
     current_url: str,
+    *,
+    step_index: int = 99,
 ) -> ActionUnion | None:
     """Convert an LLM decision dict to an IWA ActionUnion.
 
@@ -206,11 +221,19 @@ def build_action(
     Returns ``None`` only for "done" (caller returns empty actions list).
     Returns ``ScrollAction(down=True)`` as a safe fallback for invalid
     decisions instead of ``None`` (avoids re-prompt LLM call).
+
+    When *step_index* < 5 and candidates exist, falls back to clicking
+    the first candidate instead of scrolling (more likely to make progress
+    in early steps).
     """
     # Pre-validate and infer missing fields
     fixed = validate_and_fix(decision, candidates)
     if fixed is None:
-        # Unrecoverable: fallback to scroll_down (safe, non-destructive)
+        # Smarter fallback: click first candidate in early steps
+        if step_index < 5 and candidates:
+            selector = _selector_from_dict(candidates[0].selector)
+            return ClickAction(type="ClickAction", selector=selector)
+        # Late steps: scroll is safer
         return ScrollAction(type="ScrollAction", down=True)
 
     action = fixed.get("action", "")
@@ -230,6 +253,9 @@ def build_action(
         raw_url = fixed.get("url", "")
         normalized = normalize_url(raw_url)
         final_url = preserve_seed(normalized, current_url)
+        # Guard: navigating to the same path+query causes chrome-error loops
+        if _same_path_query(final_url, current_url):
+            return ScrollAction(type="ScrollAction", down=True)
         return NavigateAction(type="NavigateAction", url=final_url)
 
     # --- Actions requiring candidate_id ---

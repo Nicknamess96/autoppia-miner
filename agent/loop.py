@@ -12,8 +12,14 @@ from agent.actions import build_action, validate_and_fix
 from agent.classifier import (
     TaskType,
     classify_task,
+    detect_contact_fields,
     detect_login_fields,
+    detect_logout_target,
+    detect_registration_fields,
+    get_contact_action,
     get_login_action,
+    get_logout_action,
+    get_registration_action,
 )
 from agent.prompts import (
     build_system_prompt,
@@ -129,6 +135,57 @@ def decide(request: ActRequest) -> ActResponse:
                     return ActResponse(actions=[action])
             # step_index >= 3 or action_dict is None: fall through to LLM
 
+    if task_type == TaskType.LOGOUT:
+        logout_target = detect_logout_target(candidates)
+        if logout_target is not None:
+            action_dict = get_logout_action(request.step_index, logout_target)
+            if action_dict is not None:
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded logout action",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                            "action_type": type(action).__name__,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+
+    if task_type == TaskType.REGISTRATION:
+        reg_fields = detect_registration_fields(candidates)
+        if reg_fields is not None:
+            action_dict = get_registration_action(request.step_index, reg_fields)
+            if action_dict is not None:
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded registration action",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                            "action_type": type(action).__name__,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+
+    if task_type == TaskType.CONTACT:
+        contact_fields = detect_contact_fields(candidates)
+        if contact_fields is not None:
+            action_dict = get_contact_action(request.step_index, contact_fields)
+            if action_dict is not None:
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded contact action",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                            "action_type": type(action).__name__,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+
     # 4. Build compact Page IR
     page_ir = build_page_ir(pruned_soup, request.url, title, candidates)
 
@@ -196,7 +253,10 @@ def decide(request: ActRequest) -> ActResponse:
             decision = parse_llm_json(content)
 
             # 12. Build action (validate_and_fix is called inside build_action)
-            action = build_action(decision, candidates, request.url)
+            action = build_action(
+                decision, candidates, request.url,
+                step_index=request.step_index,
+            )
 
             # 13. Handle "done" signal
             if action is None:

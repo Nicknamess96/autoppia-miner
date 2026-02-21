@@ -21,3 +21,4 @@ class ActRequest(BaseModel):
     url: str
     step_index: int
     history: list[dict[str, Any]] = []
+    web_project_id: Optional[str] = None

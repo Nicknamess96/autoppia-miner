@@ -82,6 +82,13 @@ def _format_candidate_compact(c: Candidate) -> str:
     if meta:
         parts.append(f"({', '.join(meta)})")
 
+    # Context suffix for links/buttons — helps LLM distinguish repeated labels
+    if c.tag in ("a", "button") and c.context:
+        ctx = c.context
+        # Don't append if context is just the label repeated
+        if ctx.strip().lower() != (c.label or c.text or "").strip().lower():
+            parts.append(f'-> "{ctx[:120]}"')
+
     return " ".join(parts)
 
 

@@ -58,7 +58,7 @@ class LLMClient:
         messages: list[dict],
         model: str = "gpt-5.2",
         temperature: float = 0.2,
-        max_tokens: int = 150,
+        max_tokens: int = 300,
     ) -> dict:
         """Send a chat-completions request to the LLM gateway.
 
