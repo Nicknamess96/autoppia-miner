@@ -136,14 +136,37 @@ def decide(request: ActRequest) -> ActResponse:
             # step_index >= 3 or action_dict is None: fall through to LLM
 
     if task_type == TaskType.LOGOUT:
+        # Priority 1: logout button visible → click it
         logout_target = detect_logout_target(candidates)
         if logout_target is not None:
-            action_dict = get_logout_action(request.step_index, logout_target)
+            action_dict = {"action": "click", "candidate_id": logout_target.button_id}
+            action = build_action(action_dict, candidates, request.url)
+            if action is not None:
+                logger.info(
+                    "hardcoded logout action",
+                    extra={
+                        "task_id": request.task_id,
+                        "step_index": request.step_index,
+                        "action_type": type(action).__name__,
+                    },
+                )
+                return ActResponse(actions=[action])
+
+        # Priority 2: login form visible → login first (LOGOUT tasks
+        # often require "authenticate first, then log out")
+        login_fields = detect_login_fields(candidates)
+        if login_fields is not None:
+            # Determine login sub-step by counting type actions in history
+            type_count = sum(
+                1 for h in request.history
+                if "type" in h.get("action", "").lower()
+            )
+            action_dict = get_login_action(min(type_count, 2), login_fields)
             if action_dict is not None:
                 action = build_action(action_dict, candidates, request.url)
                 if action is not None:
                     logger.info(
-                        "hardcoded logout action",
+                        "hardcoded logout(login-first) action",
                         extra={
                             "task_id": request.task_id,
                             "step_index": request.step_index,
