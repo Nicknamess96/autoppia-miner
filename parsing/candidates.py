@@ -150,7 +150,8 @@ def extract_candidates(
 
             # Infer label and build selector
             label = infer_label(soup, el, attrs)
-            selector = build_selector(tag, attrs, text=label)
+            options = _get_select_options(el) if tag == "select" else []
+            selector = build_selector(tag, attrs, text=label, options=options)
 
             # Deduplicate by selector signature
             sig = (

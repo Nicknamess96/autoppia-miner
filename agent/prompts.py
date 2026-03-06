@@ -6,6 +6,8 @@ elements, and action history to the LLM for decision-making.
 
 from __future__ import annotations
 
+from agent.classifier import TaskType
+
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -27,12 +29,68 @@ Rules:
 2. For navigate, keep all query params (especially ?seed=).
 3. Use exact credential values from the task.
 4. Return valid JSON only. No markdown or commentary.
+5. If a confirmation dialog appears, click Confirm/OK/Yes. If a success message appears, respond done.
 
 Example:
 Input: [0] button "Log In" (id=login-btn) [1] input[text] "Username" (name=user)
 Task: Log in with username admin
 Output: {"action":"type","candidate_id":1,"text":"admin"}
 """
+
+# ---------------------------------------------------------------------------
+# Task-type-specific STRATEGY hints
+# ---------------------------------------------------------------------------
+
+_TASK_HINTS: dict[str, str] = {
+    TaskType.ADD_FILM.value: (
+        "STRATEGY:\n"
+        "Navigate to the add/create film page. "
+        "Fill in all required fields from the task. "
+        "Click submit/save."
+    ),
+    TaskType.EDIT_FILM.value: (
+        "STRATEGY:\n"
+        "Find the target film in the list, click to its detail page. "
+        "Click edit/modify. Update the specified fields. "
+        "Save changes."
+    ),
+    TaskType.DELETE_FILM.value: (
+        "STRATEGY:\n"
+        "Find the target film, click to its detail page. "
+        "Click delete/remove. Confirm the dialog. "
+        "Done."
+    ),
+    TaskType.EDIT_USER.value: (
+        "STRATEGY:\n"
+        "Log in with the given credentials. "
+        "Navigate to profile/settings page. "
+        "Update the specified fields. Save changes."
+    ),
+    TaskType.ADD_TO_WATCHLIST.value: (
+        "STRATEGY:\n"
+        "Find the target film by browsing or searching. "
+        "Click to its detail page. "
+        "Click the add-to-watchlist/wishlist button."
+    ),
+    TaskType.REMOVE_FROM_WATCHLIST.value: (
+        "STRATEGY:\n"
+        "Navigate to the watchlist/wishlist page. "
+        "Find the target film. "
+        "Click remove to remove it from the watchlist."
+    ),
+    TaskType.FILM_DETAIL.value: (
+        "STRATEGY:\n"
+        "Find the target film by browsing or searching. "
+        "Click the film title or poster to reach the detail page. "
+        "Done."
+    ),
+    TaskType.FILTER_FILM.value: (
+        "STRATEGY:\n"
+        "Find the filter/sort controls on the movie list page. "
+        "Select the specified criteria. "
+        "Apply the filter. Done."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +120,15 @@ def format_history_entry(
 # Prompt builders
 # ---------------------------------------------------------------------------
 
-def build_system_prompt() -> str:
-    """Return the system prompt string."""
+def build_system_prompt(task_type: TaskType = TaskType.UNKNOWN) -> str:
+    """Return the system prompt, optionally appending a STRATEGY hint for *task_type*.
+
+    If *task_type* has an entry in ``_TASK_HINTS``, the hint is appended after
+    the base prompt.  Otherwise the bare ``SYSTEM_PROMPT`` is returned.
+    """
+    hint = _TASK_HINTS.get(task_type.value)
+    if hint is not None:
+        return SYSTEM_PROMPT + "\n\n" + hint
     return SYSTEM_PROMPT
 
 

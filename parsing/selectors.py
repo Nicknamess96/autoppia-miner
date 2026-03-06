@@ -11,7 +11,13 @@ from __future__ import annotations
 from models.selectors import sel_attr, sel_text
 
 
-def build_selector(tag: str, attrs: dict[str, str], text: str = "") -> dict:
+def build_selector(
+    tag: str,
+    attrs: dict[str, str],
+    text: str = "",
+    *,
+    options: list[str] | None = None,
+) -> dict:
     """Build the best IWA-compatible selector for an element.
 
     Returns a dict suitable for inclusion in an IWA action payload.
@@ -41,6 +47,12 @@ def build_selector(tag: str, attrs: dict[str, str], text: str = "") -> dict:
 
     if text and tag in {"button", "a"}:
         return sel_text(text).model_dump()
+
+    # Select elements: use first option text to create unique selectors
+    if tag == "select" and options:
+        first_opt = options[0].strip() if options[0] else ""
+        if first_opt:
+            return sel_text(first_opt).model_dump()
 
     # Last resort: tag-only custom selector
     return sel_attr("custom", tag).model_dump()

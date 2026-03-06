@@ -7,18 +7,42 @@ response validation, and action building into a single ``decide()`` function.
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit
 
-from agent.actions import build_action, validate_and_fix
+from agent.actions import build_action, normalize_url, preserve_seed, validate_and_fix
 from agent.classifier import (
+    AddFilmFields,
+    EditFilmFields,
+    FilterDropdowns,
+    ProfileFields,
     TaskType,
     classify_task,
+    detect_add_film_fields,
     detect_contact_fields,
+    detect_edit_film_fields,
+    detect_filter_dropdowns,
     detect_login_fields,
     detect_logout_target,
+    detect_profile_fields,
     detect_registration_fields,
+    extract_add_film_values_from_prompt,
+    extract_credentials_from_prompt,
+    extract_edit_values_from_prompt,
+    extract_film_name_from_prompt,
+    extract_filter_criteria_from_prompt,
+    extract_profile_values_from_prompt,
+    find_button_by_label,
+    find_confirm_button,
+    find_film_details_link,
+    find_remove_button_for_film,
+    find_tab_button,
+    find_watchlist_button,
+    get_add_film_action,
     get_contact_action,
+    get_edit_film_action,
     get_login_action,
     get_logout_action,
+    get_profile_action,
     get_registration_action,
 )
 from agent.prompts import (
@@ -29,7 +53,7 @@ from agent.prompts import (
 from agent.state import check_loop, clear_task_state, get_action_signature
 from llm.client import LLMClient
 from llm.parser import parse_llm_json
-from models.actions import WaitAction
+from models.actions import NavigateAction, WaitAction
 from models.request import ActRequest
 from models.response import ActResponse
 from parsing.candidates import extract_candidates
@@ -117,6 +141,14 @@ def decide(request: ActRequest) -> ActResponse:
 
     # 3. Task classification and hard-coded sequence check (pre-LLM bypass)
     task_type = classify_task(request.prompt)
+    logger.info(
+        "task_classified",
+        extra={
+            "task_id": request.task_id,
+            "task_type": task_type.value,
+            "step_index": request.step_index,
+        },
+    )
     if task_type == TaskType.LOGIN:
         login_fields = detect_login_fields(candidates)
         if login_fields is not None:
@@ -217,6 +249,411 @@ def decide(request: ActRequest) -> ActResponse:
                     )
                     return ActResponse(actions=[action])
 
+    if task_type == TaskType.ADD_FILM:
+        url_path = urlsplit(request.url).path.rstrip("/")
+        if url_path != "/add":
+            # Navigate directly to /add/ -- saves steps vs clicking through UI
+            nav_url = preserve_seed(
+                normalize_url("/add/"), request.url
+            )
+            action = NavigateAction(type="NavigateAction", url=nav_url)
+            logger.info(
+                "hardcoded add_film navigate",
+                extra={"task_id": request.task_id, "step_index": request.step_index},
+            )
+            return ActResponse(actions=[action])
+        # On add form -- detect fields and fill
+        add_fields = detect_add_film_fields(candidates)
+        if add_fields is not None:
+            film_values = extract_add_film_values_from_prompt(request.prompt)
+            # step_index offset: step 0 was navigate, form filling starts at relative step 0
+            form_step = request.step_index - 1 if request.step_index > 0 else 0
+            action_dict = get_add_film_action(form_step, add_fields, film_values)
+            if action_dict is not None:
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded add_film action",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                            "action_type": type(action).__name__,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+        # Fallback: let LLM handle with STRATEGY hint
+
+    if task_type == TaskType.EDIT_FILM:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if url_path == "" or url_path == "/":
+            # On homepage -- find the target film and click Details
+            film_name = extract_film_name_from_prompt(request.prompt)
+            if film_name:
+                details_id = find_film_details_link(candidates, film_name)
+                if details_id is not None:
+                    action_dict = {"action": "click", "candidate_id": details_id}
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded edit_film click_details",
+                            extra={"task_id": request.task_id, "step_index": request.step_index},
+                        )
+                        return ActResponse(actions=[action])
+
+        elif "/movie/" in url_path and "/edit" not in url_path:
+            # On detail page -- click Edit button
+            edit_id = find_button_by_label(candidates, ("edit", "modify", "update"))
+            if edit_id is not None:
+                action_dict = {"action": "click", "candidate_id": edit_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded edit_film click_edit",
+                        extra={"task_id": request.task_id, "step_index": request.step_index},
+                    )
+                    return ActResponse(actions=[action])
+
+        elif "/edit" in url_path:
+            # On edit form -- detect fields and fill
+            edit_fields = detect_edit_film_fields(candidates)
+            if edit_fields is not None:
+                edit_values = extract_edit_values_from_prompt(request.prompt)
+                # Count type actions in history to determine form step
+                type_count = sum(1 for h in request.history if h.get("action", "") == "type")
+                form_step = type_count  # 0 = first type, 1+ = submit
+                action_dict = get_edit_film_action(form_step, edit_fields, edit_values)
+                if action_dict is not None:
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded edit_film action",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+
+        # Fallback: let LLM handle with STRATEGY hint
+
+    if task_type == TaskType.DELETE_FILM:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if url_path == "" or url_path == "/":
+            # On homepage -- find the target film and click Details
+            film_name = extract_film_name_from_prompt(request.prompt)
+            if film_name:
+                details_id = find_film_details_link(candidates, film_name)
+                if details_id is not None:
+                    action_dict = {"action": "click", "candidate_id": details_id}
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded delete_film click_details",
+                            extra={"task_id": request.task_id, "step_index": request.step_index},
+                        )
+                        return ActResponse(actions=[action])
+
+        elif "/movie/" in url_path:
+            # On detail page -- try confirm button first (if dialog already showing),
+            # then try delete button
+            confirm_id = find_confirm_button(candidates)
+            if confirm_id is not None:
+                action_dict = {"action": "click", "candidate_id": confirm_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded delete_film confirm",
+                        extra={"task_id": request.task_id, "step_index": request.step_index},
+                    )
+                    return ActResponse(actions=[action])
+
+            delete_id = find_button_by_label(candidates, ("delete", "remove"))
+            if delete_id is not None:
+                action_dict = {"action": "click", "candidate_id": delete_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded delete_film click_delete",
+                        extra={"task_id": request.task_id, "step_index": request.step_index},
+                    )
+                    return ActResponse(actions=[action])
+
+        else:
+            # On a non-movie page (e.g., confirmation redirect) -- check for confirm button
+            confirm_id = find_confirm_button(candidates)
+            if confirm_id is not None:
+                action_dict = {"action": "click", "candidate_id": confirm_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded delete_film confirm",
+                        extra={"task_id": request.task_id, "step_index": request.step_index},
+                    )
+                    return ActResponse(actions=[action])
+
+        # Fallback: let LLM handle with STRATEGY hint
+
+    if task_type == TaskType.ADD_TO_WATCHLIST:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if "/movie" in url_path:
+            # On movie detail page -- click watchlist button
+            watchlist_id = find_watchlist_button(candidates)
+            if watchlist_id is not None:
+                action_dict = {"action": "click", "candidate_id": watchlist_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded add_to_watchlist click_watchlist",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+        else:
+            # On homepage or other page -- find target film and click Details
+            film_name = extract_film_name_from_prompt(request.prompt)
+            if film_name:
+                details_id = find_film_details_link(candidates, film_name)
+                if details_id is not None:
+                    action_dict = {"action": "click", "candidate_id": details_id}
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded add_to_watchlist click_details",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+        # Fallback: let LLM handle
+
+    if task_type == TaskType.REMOVE_FROM_WATCHLIST:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if "/profile" not in url_path:
+            # Navigate to profile page
+            nav_url = preserve_seed(normalize_url("/profile/"), request.url)
+            action = NavigateAction(type="NavigateAction", url=nav_url)
+            logger.info(
+                "hardcoded remove_from_watchlist navigate_profile",
+                extra={
+                    "task_id": request.task_id,
+                    "step_index": request.step_index,
+                },
+            )
+            return ActResponse(actions=[action])
+
+        # On profile page -- check if we can see the target film's remove button
+        film_name = extract_film_name_from_prompt(request.prompt)
+        if film_name:
+            remove_id = find_remove_button_for_film(candidates, film_name)
+            if remove_id is not None:
+                action_dict = {"action": "click", "candidate_id": remove_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded remove_from_watchlist click_remove",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+
+        # Film not visible -- check if any remove buttons exist (indicating
+        # we're already on the watchlist tab but the film isn't there).
+        any_remove = any(
+            "remove" in (c.label or c.text or "").lower()
+            for c in candidates
+            if c.tag in ("button", "a", "input")
+        )
+        if not any_remove:
+            # No remove buttons visible -- likely on wrong tab. Click Watchlist tab.
+            tab_id = find_tab_button(candidates, ("watchlist", "my list", "saved", "list"))
+            if tab_id is not None:
+                action_dict = {"action": "click", "candidate_id": tab_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded remove_from_watchlist click_tab",
+                        extra={
+                            "task_id": request.task_id,
+                            "step_index": request.step_index,
+                        },
+                    )
+                    return ActResponse(actions=[action])
+        # Fallback: let LLM handle
+
+    if task_type == TaskType.EDIT_USER:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        # Priority 1: Login form visible -> login first
+        login_fields = detect_login_fields(candidates)
+        if login_fields is not None:
+            creds = extract_credentials_from_prompt(request.prompt)
+            if creds:
+                username, password = creds
+                type_count = sum(
+                    1 for h in request.history
+                    if h.get("action", "") == "type"
+                )
+                login_done = type_count >= 2 and any(
+                    h.get("action", "") == "click" for h in request.history
+                )
+                if not login_done:
+                    step = min(type_count, 2)
+                    if step == 0:
+                        action_dict = {
+                            "action": "type",
+                            "candidate_id": login_fields.username_id,
+                            "text": username,
+                        }
+                    elif step == 1:
+                        action_dict = {
+                            "action": "type",
+                            "candidate_id": login_fields.password_id,
+                            "text": password,
+                        }
+                    else:
+                        action_dict = {
+                            "action": "click",
+                            "candidate_id": login_fields.submit_id,
+                        }
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded edit_user login-first",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+
+        # Priority 2: Not on profile page -> navigate to /profile
+        elif "/profile" not in url_path:
+            nav_url = preserve_seed(normalize_url("/profile/"), request.url)
+            action = NavigateAction(type="NavigateAction", url=nav_url)
+            logger.info(
+                "hardcoded edit_user navigate_profile",
+                extra={
+                    "task_id": request.task_id,
+                    "step_index": request.step_index,
+                },
+            )
+            return ActResponse(actions=[action])
+
+        # Priority 3: On profile page -> detect fields and fill
+        else:
+            profile_fields = detect_profile_fields(candidates)
+            if profile_fields is not None:
+                profile_values = extract_profile_values_from_prompt(request.prompt)
+                type_count = sum(
+                    1 for h in request.history
+                    if h.get("action", "") == "type"
+                )
+                # Subtract login types (2) from total to get profile form step
+                profile_type_count = max(0, type_count - 2)
+                action_dict = get_profile_action(
+                    profile_type_count, profile_fields, profile_values
+                )
+                if action_dict is not None:
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded edit_user action",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+        # Fallback: let LLM handle
+
+    if task_type == TaskType.FILM_DETAIL:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        # Already on a movie detail page -> done
+        if "/movie" in url_path:
+            return ActResponse(actions=[])
+
+        # On homepage or other page -> find target film and click Details
+        film_name = extract_film_name_from_prompt(request.prompt)
+        if film_name:
+            details_id = find_film_details_link(candidates, film_name)
+            if details_id is not None:
+                action_dict = {"action": "click", "candidate_id": details_id}
+                action = build_action(action_dict, candidates, request.url)
+                if action is not None:
+                    logger.info(
+                        "hardcoded film_detail click_details",
+                        extra={"task_id": request.task_id, "step_index": request.step_index},
+                    )
+                    return ActResponse(actions=[action])
+        # Fallback: let LLM handle (criteria-based prompts without specific film name)
+
+    if task_type == TaskType.FILTER_FILM:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if "/search" not in url_path:
+            # Navigate to search page
+            nav_url = preserve_seed(normalize_url("/search"), request.url)
+            action = NavigateAction(type="NavigateAction", url=nav_url)
+            logger.info(
+                "hardcoded filter_film navigate_search",
+                extra={"task_id": request.task_id, "step_index": request.step_index},
+            )
+            return ActResponse(actions=[action])
+
+        # On search page -> extract criteria and select dropdowns
+        criteria = extract_filter_criteria_from_prompt(request.prompt)
+        if criteria:
+            dropdowns = detect_filter_dropdowns(candidates)
+            if dropdowns is not None:
+                # Count select actions in history to determine which dropdown to fill next
+                select_count = sum(
+                    1 for h in request.history
+                    if h.get("action", h.get("type", "")) in ("select", "SelectDropDownOptionAction")
+                )
+
+                # Build ordered steps: genre first (if present), then year
+                steps: list[dict] = []
+                if "genre" in criteria and dropdowns.genre_id is not None:
+                    steps.append({
+                        "action": "select",
+                        "candidate_id": dropdowns.genre_id,
+                        "text": criteria["genre"],
+                    })
+                if "year" in criteria and dropdowns.year_id is not None:
+                    steps.append({
+                        "action": "select",
+                        "candidate_id": dropdowns.year_id,
+                        "text": criteria["year"],
+                    })
+
+                if select_count < len(steps):
+                    action_dict = steps[select_count]
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded filter_film select",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+        # Fallback: let LLM handle
+
     # 4. Build compact Page IR
     page_ir = build_page_ir(pruned_soup, request.url, title, candidates)
 
@@ -234,7 +671,7 @@ def decide(request: ActRequest) -> ActResponse:
         loop_hint = check_loop(request.task_id, request.url, last_sig)
 
     # 8. Build LLM messages
-    system_msg = build_system_prompt()
+    system_msg = build_system_prompt(task_type)
     user_msg = build_user_prompt(
         task_prompt=request.prompt,
         page_ir=page_ir,
