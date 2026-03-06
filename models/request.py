@@ -1,4 +1,4 @@
-"""ActRequest Pydantic model with strict validation (extra=forbid)."""
+"""ActRequest Pydantic model — extra fields silently ignored for forward-compat."""
 
 from typing import Any, Optional
 
@@ -8,11 +8,11 @@ from pydantic import BaseModel, ConfigDict
 class ActRequest(BaseModel):
     """Incoming request body for the POST /act endpoint.
 
-    Fields match the IWA evaluator payload exactly.
-    Extra fields are rejected with a 422 response.
+    Fields match the IWA evaluator payload.
+    Extra fields (e.g. ``model``) are silently ignored for forward-compat.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     task_id: str
     prompt: str
