@@ -2,7 +2,7 @@
 
 Exports ``app`` for use with ``uvicorn main:app``.
 
-Build: v1.1.2 -- force re-evaluation (cache bust).
+Build: v1.1.3 -- cache bust for validator re-evaluation.
 """
 
 import json
