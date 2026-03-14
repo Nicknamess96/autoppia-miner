@@ -15,6 +15,7 @@ from agent.classifier import (
     EditFilmFields,
     FilterDropdowns,
     ProfileFields,
+    SearchFields,
     TaskType,
     classify_task,
     detect_add_film_fields,
@@ -25,6 +26,7 @@ from agent.classifier import (
     detect_logout_target,
     detect_profile_fields,
     detect_registration_fields,
+    detect_search_input,
     extract_add_film_values_from_prompt,
     extract_credentials_from_prompt,
     extract_edit_values_from_prompt,
@@ -44,6 +46,7 @@ from agent.classifier import (
     get_logout_action,
     get_profile_action,
     get_registration_action,
+    get_search_action,
 )
 from agent.prompts import (
     build_system_prompt,
@@ -645,6 +648,44 @@ def decide(request: ActRequest) -> ActResponse:
                     if action is not None:
                         logger.info(
                             "hardcoded filter_film select",
+                            extra={
+                                "task_id": request.task_id,
+                                "step_index": request.step_index,
+                                "action_type": type(action).__name__,
+                            },
+                        )
+                        return ActResponse(actions=[action])
+        # Fallback: let LLM handle
+
+    if task_type == TaskType.SEARCH_FILM:
+        url_path = urlsplit(request.url).path.rstrip("/")
+
+        if "/search" not in url_path:
+            # Step 1: Navigate to search page
+            nav_url = preserve_seed(normalize_url("/search"), request.url)
+            action = NavigateAction(type="NavigateAction", url=nav_url)
+            logger.info(
+                "hardcoded search_film navigate_search",
+                extra={"task_id": request.task_id, "step_index": request.step_index},
+            )
+            return ActResponse(actions=[action])
+
+        # Step 2+: On search page -- find text input, type search term, submit
+        film_name = extract_film_name_from_prompt(request.prompt)
+        if film_name:
+            search_fields = detect_search_input(candidates)
+            if search_fields is not None:
+                # Count type actions in history to determine search sequence step
+                type_count = sum(
+                    1 for h in request.history
+                    if h.get("action", "") == "type"
+                )
+                action_dict = get_search_action(type_count, search_fields, film_name)
+                if action_dict is not None:
+                    action = build_action(action_dict, candidates, request.url)
+                    if action is not None:
+                        logger.info(
+                            "hardcoded search_film action",
                             extra={
                                 "task_id": request.task_id,
                                 "step_index": request.step_index,
