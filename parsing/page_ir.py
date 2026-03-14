@@ -9,7 +9,7 @@ consumption:
     Section 2 -- **Interactive Elements:** Numbered one-liner per
     candidate element with tag, label, and key metadata.
 
-The output respects a hard token budget (default 1200 tokens) enforced
+The output respects a hard token budget (default 900 tokens) enforced
 via a 4-char/token heuristic with a 10 % safety margin (effective
 character cap = ``max_tokens * 4 * 0.9``).
 """
@@ -103,7 +103,7 @@ def build_page_ir(
     title: str,
     candidates: list[Candidate],
     *,
-    max_tokens: int = 1200,
+    max_tokens: int = 900,
 ) -> str:
     """Build a compact page intermediate representation under token budget.
 
@@ -116,7 +116,7 @@ def build_page_ir(
         url: Current page URL.
         title: Page ``<title>`` text.
         candidates: List of ``Candidate`` objects from ``extract_candidates()``.
-        max_tokens: Hard token cap for the output (default 1200).
+        max_tokens: Hard token cap for the output (default 900).
 
     Returns:
         A plain-text string with two labelled sections.
