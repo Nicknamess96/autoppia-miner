@@ -1519,3 +1519,77 @@ def detect_filter_dropdowns(
     if genre_id is None and year_id is None:
         return None
     return FilterDropdowns(genre_id=genre_id, year_id=year_id)
+
+
+# =========================================================================
+# Search film shortcut
+# =========================================================================
+
+
+@dataclass
+class SearchFields:
+    """Identified search page fields."""
+
+    input_id: int
+    submit_id: int | None  # May be None if search auto-submits or no button found
+
+
+def detect_search_input(candidates: list[Candidate]) -> SearchFields | None:
+    """Detect search text input and optional submit button on the /search page.
+
+    Returns ``SearchFields`` if a text/search input is found, ``None`` otherwise.
+
+    Detection rules:
+    - **Input:** ``<input>`` with ``input_type`` in (text, search, "") on the search page.
+      Prefer inputs whose label/placeholder contains 'search', 'find', 'query', 'keyword'.
+      Fallback: any text input (likely the search box if on /search).
+    - **Submit:** ``<button>`` or ``<input type="submit">`` with label containing
+      'search', 'find', 'go', 'submit'.
+    """
+    input_id: int | None = None
+    submit_id: int | None = None
+
+    for c in candidates:
+        if c.tag == "input" and c.input_type in ("text", "search", ""):
+            label_lower = (c.label or c.placeholder or "").lower()
+            if any(kw in label_lower for kw in ("search", "find", "query", "keyword")):
+                input_id = c.id
+                continue
+            # Fallback: any text/search input on this page
+            if input_id is None:
+                input_id = c.id
+
+    # Submit button
+    for c in candidates:
+        if c.tag == "button" or (c.tag == "input" and c.input_type == "submit"):
+            lbl = (c.label or c.text or "").lower()
+            if any(kw in lbl for kw in ("search", "find", "go", "submit")):
+                submit_id = c.id
+                break
+
+    if input_id is None:
+        return None
+    return SearchFields(input_id=input_id, submit_id=submit_id)
+
+
+def get_search_action(step_index: int, fields: SearchFields, search_term: str) -> dict | None:
+    """Return the hard-coded action dict for a SEARCH_FILM sequence step.
+
+    Steps:
+        0: Type search term into the search input.
+        1: Click submit button (or signal done if no submit button).
+
+    Returns ``None`` when ``step_index >= 2`` (sequence complete).
+    """
+    if step_index == 0:
+        return {
+            "action": "type",
+            "candidate_id": fields.input_id,
+            "text": search_term,
+        }
+    if step_index == 1:
+        if fields.submit_id is not None:
+            return {"action": "click", "candidate_id": fields.submit_id}
+        # No submit button found -- search may auto-submit on type, signal done
+        return None
+    return None
