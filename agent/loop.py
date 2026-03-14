@@ -703,7 +703,7 @@ def decide(request: ActRequest) -> ActResponse:
             usage = resp.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
-            estimated_cost = (prompt_tokens * 1.75 + completion_tokens * 14.00) / 1_000_000
+            estimated_cost = (prompt_tokens * 0.05 + completion_tokens * 0.40) / 1_000_000
             logger.info(
                 "llm_call",
                 extra={

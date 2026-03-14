@@ -56,7 +56,7 @@ class LLMClient:
         *,
         task_id: str,
         messages: list[dict],
-        model: str = "gpt-5.2",
+        model: str = "gpt-5-nano",
         temperature: float = 0.2,
         max_tokens: int = 300,
     ) -> dict:
@@ -65,7 +65,7 @@ class LLMClient:
         Args:
             task_id: IWA task identifier (sent as ``IWA-Task-ID`` header).
             messages: OpenAI-style message list.
-            model: Model name (default ``gpt-5.2``).
+            model: Model name (default ``gpt-5-nano``).
             temperature: Sampling temperature (ignored for GPT-5.x).
             max_tokens: Maximum tokens in the completion.
 
