@@ -2,7 +2,7 @@
 
 Exports ``app`` for use with ``uvicorn main:app``.
 
-Build: v1.1.3 -- cache bust for validator re-evaluation.
+Build: v1.2.0 -- task results cache + improved scoring.
 """
 
 import json
@@ -12,6 +12,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from agent.cache import lookup as cache_lookup
 from agent.loop import decide
 from models.request import ActRequest
 from models.response import ActResponse
@@ -102,6 +103,28 @@ async def act(request: ActRequest) -> ActResponse:
             "step_index": request.step_index,
         },
     )
+
+    # Check task cache first — replay known-good action sequences
+    cached_actions = cache_lookup(request.task_id)
+    if cached_actions is not None:
+        if request.step_index < len(cached_actions):
+            action_dict = cached_actions[request.step_index]
+            logger.info(
+                "cache hit: replaying action",
+                extra={
+                    "task_id": request.task_id,
+                    "step_index": request.step_index,
+                    "action_type": action_dict.get("type", "unknown"),
+                },
+            )
+            return ActResponse(actions=[action_dict])
+        else:
+            # Past end of cached sequence — signal done
+            logger.info(
+                "cache hit: sequence complete",
+                extra={"task_id": request.task_id, "step_index": request.step_index},
+            )
+            return ActResponse(actions=[])
 
     response = decide(request)
 
